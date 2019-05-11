@@ -1,0 +1,816 @@
+#include "graphics.h"
+#include "extgraph.h"
+#include "genlib.h"
+#include "simpio.h"
+#include "conio.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stddef.h>
+
+#include <windows.h>
+#include <olectl.h>
+#include <mmsystem.h>
+#include <wingdi.h>
+#include <ole2.h>
+#include <ocidl.h>
+#include <winuser.h>
+
+#include <math.h>
+#include <string.h>
+#include <time.h>
+
+
+#include "imgui.h"
+#include "data.c"
+#include "draw.c"
+
+
+/* Constants */
+
+#define ROWS 18
+#define COLS 10
+
+#define MAX_STRING_LENGTH  60
+
+// the code name of the moving direction
+#define GO_RIGHT 1
+#define GO_LEFT 2
+#define GO_DOWN 3
+
+// the code name of the type
+#define Max_Level           5
+#define Max_Type           18
+#define Max_GType           6
+#define GTYPE_Lump          0
+#define GTYPE_TriAngle      1
+#define GTYPE_I             2
+#define GTYPE_L             3
+#define GTYPE_J             4
+#define GTYPE_Z             5
+#define GTYPE_S             6
+
+// skill cd
+#define SkillFreezeFullCD 20000
+#define Twide 0.6
+#define Theight 0.14
+#define Tlength 1.0
+#define Ewide_a 0.6
+#define Ewide_b 0.4
+#define Iwide 0.4
+
+static int Blinks[10] = { 0, 500, 300, 200, 100, 70 };
+static double TIMES[10] = { 0, 1.0, 1.2, 1.5, 1.8, 2.0 };
+
+// items concerning the status of the current block group
+static int CenterX, CenterY;
+static int CurrentType, NextType;
+static int NeighborExistence[ROWS][COLS];
+
+// items concerning the status of the block
+static char BlockColor[ROWS][COLS][MAX_STRING_LENGTH];
+static int BlockExistence[ROWS][COLS];
+static int BlockCnt[ROWS];
+
+// items concerning the statisics
+static int CurrentLevel;
+static int CurrentScore;
+static int LastScore;
+static int EliminationCount;
+static int TetrisCount;
+static clock_t StartClock;
+static clock_t CurrentClock;
+static int DurationClock;
+static char Messages[10][MAX_STRING_LENGTH];
+
+// other items
+static int isPaused;
+
+static int SkillFreezeLevel = 3;
+static int SkillFreezeCD;
+static int SkillFreezeDuration;
+static int SkillFreezeDurations[10] = { 0, 10000, 12000, 14000 };
+static int StatusFreeze;
+
+static int inStartMenu = 1;
+static int inCredits = 0;
+static double cx;
+static double cy;
+static double xx;
+static double yy;
+static double winwidth;
+static double winheight;
+static double yy1;
+static double yy2;
+static double yy3;
+static double sx;
+static double sy;
+
+/* Function prototypes */
+
+// initialize at the beginning
+void Initialize();
+
+// the drawing methods
+void DrawAllBlocks();
+void DrawNextTetris();
+void DrawItems();
+void ShowInfo();
+
+// the eliminating methods
+void EliminateSingleRow(int row, int CountScore);
+void CalcEliminationScore(int row);
+void EliminationDetection();
+
+// the moving methods
+void MoveTetris(int isMove);
+void ChangePosition(int MoveType);
+int MoveSingleDetection(int x, int y);
+int MoveWholeDetection(int MoveType);
+
+// the rotating method
+void ClearNeighbors();
+int RotateDetection(int clockwise);
+void RotateTetris(int clockwise);
+
+// other methods
+void GenerateNextType();
+void GenerateNewTetris();
+int CollisionDetection();
+int OutOfBorder(int x, int y);
+void CountCnt();
+void MessageUpdate(char* NewMessage);
+
+// the skill part
+void SkillFreeze();
+void SkillColor();
+void SkillZone();
+
+// the event listeners
+void KeyboardEventProcess(int key, int event);
+void TimerEventProcess(int TimerID);
+void MouseEventProcess(int x, int y, int button, int event);
+
+
+void DrawLogoRec(double x, double y, double width, double heitht);
+void DrawLogo(double x, double y);
+void Draw_T_a(double x, double y);
+void Draw_T_b(double x, double y);
+void Draw_E(double x, double y);
+void Draw_R(double x, double y);
+void Draw_I(double x, double y);
+void Draw_S(double x, double y);
+void DrawButton();
+void GameStart();
+void ShowCredits();
+
+
+void Main()
+{
+	InitGraphics();
+	
+	winwidth = GetWindowWidth();
+	winheight = GetWindowHeight();
+	cx = GetWindowWidth() / 12;
+	cy = GetWindowHeight() / 4 * 3;
+
+
+	registerKeyboardEvent(KeyboardEventProcess);
+	registerMouseEvent(MouseEventProcess);
+	
+	
+	DrawLogo(cx, cy);
+	DrawButton();
+
+}
+
+void ShowCredits()
+{
+	InitGraphics();
+	sx = winwidth / 3;
+	sy = winheight / 4 * 3;
+	double fH = GetFontHeight();
+	double h = fH * 1.5;
+	SetPenColor("Black");
+	drawLabel(sx, sy -= h, "Name                  ID");
+	SetPenColor("Blue");
+	drawLabel(sx, sy -= h, "Nan Li                 3180103845");
+	SetPenColor("Magenta");
+	drawLabel(sx, sy -= h, "Zhiying Zhu        3180103536");
+	drawLabel(sx, sy -= h, "Jiaqi Liu              3180105728");
+	SetPenColor("Red");
+	drawLabel(sx += 2, sy -= 2 * h, ">> Back <<");
+
+}
+
+void DrawButton()
+{
+	double fH = GetFontHeight();
+	double h = fH * 1.5;
+
+	xx = 5*cx;
+	yy = winheight/ 2;
+	SetPenColor("Black");
+	drawLabel(xx, yy -= h, " >> Start Game <<");
+	SetPenColor("Gray");
+	double strx = xx - cx * 1.5;
+	drawLabel(strx, yy -= h, " ( or you can press the SPACE key to start the game )");
+	SetPenColor("Black");
+	drawLabel(xx, yy -= h, ">> Ranking List <<");
+	yy1 = yy - h;
+	drawLabel(xx, yy1, "     >> Credits <<");
+	yy2 = yy - 2 * h;
+	drawLabel(xx, yy2, "        >> Quit <<");
+	yy3 = yy - 3 * h;
+	SetPenColor("Light Gray");
+	drawLabel(xx, yy3, "       Version 1.0 ");
+
+}
+
+
+
+void GameStart()
+{
+		// initialize
+		Initialize();
+		InitNeighbor();
+		// SetWindowSize(10, 8);//???
+		InitGraphics();
+		SetWindowTitle("Tetris");
+
+
+		// register event listener
+		registerTimerEvent(TimerEventProcess);
+		registerKeyboardEvent(KeyboardEventProcess);
+		startTimer(0, Blinks[CurrentLevel]);
+
+
+
+		// game start
+		GenerateNewTetris();
+
+}
+
+void Initialize()
+{
+	// initialize the status of the blocks
+	int i, j;
+	for (i = 0; i < ROWS; i++)
+		for (j = 0; j < COLS; j++)
+		{
+			BlockExistence[i][j] = NeighborExistence[i][j] = BlockCnt[i] = 0;
+			strcpy(BlockColor[i][j], "");
+		}
+
+	// initialize the statisics
+	CurrentScore = 0;
+	LastScore = 0;
+	EliminationCount = 0;
+	TetrisCount = 0;
+	CurrentLevel = 1;
+	isPaused = 0;
+	strcpy(Messages[0], "");
+	strcpy(Messages[1], "");
+	strcpy(Messages[2], "");
+	strcpy(Messages[3], "");
+	strcpy(Messages[4], "");
+
+	// randomize the first tetris
+	Randomize();
+	GenerateNextType();
+
+	StartClock = clock();
+
+	SkillFreezeCD = 0;
+	StatusFreeze = 0;
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void DrawAllBlocks()
+{
+	int i, j;
+	double x, y;
+	for (i = 0; i < ROWS; i++)
+		for (j = 0; j < COLS; j++)
+		{
+			if (!BlockExistence[i][j]) continue;
+
+			// calc the location
+			x = GetBlockX(j, 1);
+			y = GetBlockY(i, 1);
+			DrawSingleBlock(x, y, BlockColor[i][j]);
+		}
+}
+
+void DrawNextTetris()
+{
+	int i;
+	double x, y;
+	for (i = 0; i < NeighborSize[NextType]; i++)
+	{
+		x = GetBlockX(NeighborX[NextType][i] + 1, 0);
+		y = GetBlockY(NeighborY[NextType][i] + 1, 0);
+		DrawSingleBlock(x, y, NeighborColor[NextType]);
+	}
+}
+
+void DrawItems()
+{
+	DisplayClear();
+	DrawAllBlocks();
+	DrawBorder();
+	DrawNextTetris();
+	DrawInfo(DurationClock, CurrentLevel, CurrentScore, EliminationCount, Messages, SkillFreezeCD);
+
+#ifdef SHOW_INFO
+	ShowInfo();
+#endif
+}
+
+void ShowInfo()
+{
+	int i;
+	double DEBUG_X = 8.0, DEBUG_Y = 6.0, DEBUG_OFFSET = 0.2;
+	double x = DEBUG_X, y = DEBUG_Y + DEBUG_OFFSET;
+	char tempString[MAX_STRING_LENGTH];
+
+	for (i = 0;; i++)
+	{
+		y -= DEBUG_OFFSET;
+		MovePen(x, y);
+		switch (i)
+		{
+		case 0:sprintf(tempString, "blink now: %d", Blinks[CurrentLevel]); break;
+		case 1:sprintf(tempString, "bonus now: %lf", TIMES[CurrentLevel]); break;
+		}
+		if (i >= 2) break;
+		DrawTextString(tempString);
+	}
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void EliminateSingleRow(int row, int CountScore)
+{
+	int j;
+
+	if (CountScore)
+	{
+		EliminationCount++;
+		CalcEliminationScore(row);
+	}
+	BlockCnt[row] = 0;
+	for (j = 0; j < COLS; j++)
+	{
+		BlockExistence[row][j] = 0;
+		strcpy(BlockColor[row][j], "");
+	}
+}
+
+void CalcEliminationScore(int row)
+{
+	char color[MAX_STRING_LENGTH];
+	char tempString[MAX_STRING_LENGTH];
+	int j, bonus = 1;
+	time_t timep;
+	struct tm *ptime;
+
+	time(&timep);
+	ptime = gmtime(&timep);
+
+	LastScore = 0;
+	strcpy(color, "");
+	for (j = 0; j < COLS; j++)
+	{
+		if (strcmp(color, BlockColor[row][j]) == 0)
+			bonus++;
+		else bonus = 1;
+
+		strcpy(color, BlockColor[row][j]);
+		LastScore += bonus;
+	}
+	LastScore = (int)(LastScore * TIMES[CurrentLevel]);
+
+	sprintf(tempString, "%02d: %02d: %02d, row %d has been eliminated! And you scored %d",
+		8 + ptime->tm_hour, ptime->tm_min, ptime->tm_sec, row, LastScore);
+	MessageUpdate(tempString);
+	CurrentScore += LastScore;
+}
+
+void EliminationDetection()
+{
+	int i, i2, j;
+
+	for (i = 0; i < ROWS; i++)
+	{
+		if (BlockCnt[i] == COLS)
+		{
+			EliminateSingleRow(i, 1);
+			for (i2 = i; i2 < ROWS; i2++)
+			{
+				if (i2 == ROWS - 1)
+					EliminateSingleRow(i2, 0);
+				else
+				{
+					BlockCnt[i2] = BlockCnt[i2 + 1];
+					for (j = 0; j < COLS; j++)
+					{
+						BlockExistence[i2][j] = BlockExistence[i2 + 1][j];
+						strcpy(BlockColor[i2][j], BlockColor[i2 + 1][j]);
+					}
+				}
+			}
+			i--;
+		}
+	}
+	DrawItems();
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void MoveTetris(int isMove)
+{
+	int i, newx, newy;
+	for (i = 0; i < NeighborSize[CurrentType]; i++)
+	{
+		newx = CenterX + NeighborX[CurrentType][i];
+		newy = CenterY + NeighborY[CurrentType][i];
+		BlockExistence[newy][newx] = isMove;
+		NeighborExistence[newy][newx] = isMove;
+		if (isMove) strcpy(BlockColor[newy][newx], NeighborColor[CurrentType]);
+		else strcpy(BlockColor[newy][newx], "");
+	}
+}
+
+void ChangePosition(int MoveType)
+{
+	MoveTetris(0);
+	switch (MoveType)
+	{
+	case GO_RIGHT:CenterX++; break;
+	case GO_LEFT:CenterX--; break;
+	case GO_DOWN:CenterY--; break;
+	}
+	MoveTetris(1);
+	DrawItems();
+}
+
+int MoveSingleDetection(int x, int y)
+{
+	//caution: neighbor should be neglected!
+	return (BlockExistence[y][x] && !NeighborExistence[y][x]);
+}
+
+int MoveWholeDetection(int MoveType)
+{
+	int i, newx, newy;
+	for (i = 0; i < NeighborSize[CurrentType]; i++)
+	{
+		newx = CenterX + NeighborX[CurrentType][i];
+		newy = CenterY + NeighborY[CurrentType][i];
+		switch (MoveType)
+		{
+		case GO_RIGHT:if (newx >= COLS - 1 || MoveSingleDetection(newx + 1, newy)) return 0; break;
+		case GO_LEFT:if (newx <= 0 || MoveSingleDetection(newx - 1, newy)) return 0; break;
+		case GO_DOWN:if (newy <= 0 || MoveSingleDetection(newx, newy - 1)) return 0; break;
+		}
+	}
+	return 1;
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void GenerateNextType()
+{
+	int GTYPE = RandomInteger(0, Max_GType);
+
+#ifdef ONE_TYPE
+	GTYPE = GTYPE_J;
+#endif
+
+	switch (GTYPE)
+	{
+	case GTYPE_Lump:NextType = TYPE_QuadLump; break;
+	case GTYPE_TriAngle:NextType = RandomInteger(1, 4); break;
+	case GTYPE_I:NextType = RandomInteger(5, 6); break;
+	case GTYPE_L:NextType = RandomInteger(7, 10); break;
+	case GTYPE_J:NextType = RandomInteger(11, 14); break;
+	case GTYPE_Z:NextType = RandomInteger(15, 16); break;
+	case GTYPE_S:NextType = RandomInteger(17, 18); break;
+	}
+}
+
+void GenerateNewTetris()
+{
+	int TryTimes = 0;
+
+	TetrisCount++;
+	CurrentType = NextType;
+	GenerateNextType();
+	while (TryTimes < 100)// if there isn't somewhere to put the new tetris
+	{
+		TryTimes++;
+		CenterX = RandomInteger(0, COLS - 1);
+		CenterY = RandomInteger(ROWS - 3, ROWS - 1);
+		if (!CollisionDetection()) break;
+	}
+	if (CollisionDetection()) exit(0);
+
+	MoveTetris(1);
+	DrawItems();
+}
+
+int OutOfBorder(int x, int y)
+{
+	return (y < 0 || x < 0 || x >= COLS || y >= ROWS);
+}
+
+int CollisionDetection()
+{
+	int i, newx, newy;
+	for (i = 0; i < NeighborSize[CurrentType]; i++)
+	{
+		newx = CenterX + NeighborX[CurrentType][i];
+		newy = CenterY + NeighborY[CurrentType][i];
+		if (BlockExistence[newy][newx] || OutOfBorder(newx, newy))
+			return 1;
+	}
+	return 0;
+}
+
+void CountCnt()
+{
+	int i;
+	for (i = 0; i < NeighborSize[CurrentType]; i++)
+		BlockCnt[CenterY + NeighborY[CurrentType][i]]++;
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void ClearNeighbors()
+{
+	int i, newx, newy;
+	for (i = 0; i < NeighborSize[CurrentType]; i++)
+	{
+		newx = CenterX + NeighborX[CurrentType][i];
+		newy = CenterY + NeighborY[CurrentType][i];
+		NeighborExistence[newy][newx] = 0;
+	}
+}
+
+int RotateDetection(int clockwise)
+{
+	int i, newx, newy, MapedType;
+
+	//get the mapped tetris type
+	MapedType = TypeMap(CurrentType, clockwise);
+	if (MapedType == -1) return 0;
+	for (i = 0; i < NeighborSize[MapedType]; i++)
+	{
+		newx = CenterX + NeighborX[MapedType][i];
+		newy = CenterY + NeighborY[MapedType][i];
+		if (OutOfBorder(newx, newy) || MoveSingleDetection(newx, newy))// if conflicting
+			return 0;
+	}
+	return 1;
+}
+
+void RotateTetris(int clockwise)
+{
+	if (!RotateDetection(clockwise)) return;
+	ClearNeighbors();
+	MoveTetris(0);
+
+	// change the tetris type
+	CurrentType = TypeMap(CurrentType, clockwise);
+
+	MoveTetris(1);
+	DrawItems();
+}
+
+//Hello!
+//I am a
+//Dividing Line!
+//( '▿ ' )
+
+void MessageUpdate(char* NewMessage)
+{
+	strcpy(Messages[3], Messages[2]);
+	strcpy(Messages[2], Messages[1]);
+	strcpy(Messages[1], Messages[0]);
+	strcpy(Messages[0], NewMessage);
+	DrawItems();
+}
+
+void FreezeDection()
+{
+	int i;
+	int FreezeBonus[10] = { 0, 2, 3, 4 };
+
+	if (StatusFreeze)
+		SkillFreezeDuration -= Blinks[CurrentLevel];
+	if (SkillFreezeCD > 0)
+		SkillFreezeCD -= Blinks[CurrentLevel];
+	if (SkillFreezeDuration <= 0 && StatusFreeze)
+	{
+		StatusFreeze = 0;
+		for (i = 0; i <= Max_Level; i++)
+			Blinks[i] /= FreezeBonus[SkillFreezeLevel];
+		MessageUpdate("freeze mode over!");
+		startTimer(0, Blinks[CurrentLevel]);
+	}
+}
+
+void SkillFreeze()
+{
+	int i;
+	int FreezeBonus[10] = { 0, 2, 3, 4 };
+
+	if (StatusFreeze) { MessageUpdate("already in freeze mode!"); return; }
+	if (SkillFreezeCD > 0) { MessageUpdate("caution cd!"); return; }
+
+	StatusFreeze = 1;
+	SkillFreezeDuration = SkillFreezeDurations[SkillFreezeLevel];
+	SkillFreezeCD = SkillFreezeFullCD;
+	for (i = 0; i <= Max_Level; i++)
+		Blinks[i] *= FreezeBonus[SkillFreezeLevel];
+	startTimer(0, Blinks[CurrentLevel]);
+	MessageUpdate("you are in freeze mode!");
+}
+
+void TimerEventProcess(int TimerID)
+{
+	CurrentClock = clock();
+	DurationClock = (int)(CurrentClock - StartClock) / CLOCKS_PER_SEC;
+
+	//pause detection
+	if (isPaused) return;
+
+	//skill--
+	FreezeDection();
+
+	// detect whether the tetris has fallen to the ground
+	if (!MoveWholeDetection(GO_DOWN)) {
+		CountCnt();
+		ClearNeighbors();
+		EliminationDetection();
+		GenerateNewTetris();
+	}
+	else ChangePosition(GO_DOWN);
+}
+
+void KeyboardEventProcess(int key, int event)
+{
+	switch (event)
+	{
+	case KEY_DOWN:
+		switch (key)
+		{
+		case VK_RIGHT:if (!isPaused) if (MoveWholeDetection(GO_RIGHT)) ChangePosition(GO_RIGHT); break;
+		case VK_LEFT:if (!isPaused) if (MoveWholeDetection(GO_LEFT)) ChangePosition(GO_LEFT); break;
+		case VK_DOWN:if (!isPaused) if (MoveWholeDetection(GO_DOWN)) ChangePosition(GO_DOWN); break;
+		case VK_UP:if (!isPaused) while (MoveWholeDetection(GO_DOWN)) ChangePosition(GO_DOWN); break;
+		case 'Z':if (!isPaused) RotateTetris(0); break;
+		case 'X':if (!isPaused) RotateTetris(1); break;
+		case 'Q':isPaused = !isPaused; break;
+		case 'W':if (CurrentLevel < Max_Level) CurrentLevel++; startTimer(0, Blinks[CurrentLevel]); break;
+		case 'F':if (!isPaused) SkillFreeze(); break;
+		case VK_SPACE:
+			if (inStartMenu) {
+				GameStart();
+			}
+			inStartMenu = 0;
+			break;
+		}
+	}
+}
+
+void DrawLogo(double x, double y)
+{
+
+	Draw_T_a( 3*x, y);
+	Draw_E(4* x, y);
+	Draw_T_b(5 * x, y);
+	Draw_R(6 * x, y);
+	Draw_I(7 * x, y);
+	Draw_S(8 * x - 0.2, y);
+
+}
+
+void Draw_T_a(double x, double y)
+{
+	SetPenColor("Red");
+	DrawLogoRec(x, y, Twide, Theight);
+	DrawLogoRec(x + Twide / 2 - Theight / 2, y - Tlength, Theight, Tlength);
+}
+
+void Draw_E(double x, double y)
+{
+	SetPenColor("Orange");
+	DrawLogoRec(x, y, Ewide_a, Theight);
+	DrawLogoRec(x, y - Tlength, Theight, Tlength);
+	DrawLogoRec(x, y - Tlength / 2.5, Ewide_b, Theight);
+	DrawLogoRec(x, y - Tlength, Ewide_a, Theight);
+}
+
+void Draw_T_b(double x, double y)
+{
+	SetPenColor("Yellow");
+	DrawLogoRec(x, y, Twide, Theight);
+	DrawLogoRec(x + Twide / 2 - Theight / 2, y - Tlength, Theight, Tlength);
+}
+
+void Draw_R(double x, double y)
+{
+	SetPenColor("Green");
+	DrawLogoRec(x, y, Ewide_a, Theight);
+	DrawLogoRec(x, y - Tlength, Theight, Tlength);
+	DrawLogoRec(x, y - Tlength / 2.5, Ewide_a, Theight);
+	DrawLogoRec(x + Ewide_a - Theight, y - Tlength / 2.5, Theight, Tlength / 2.5);
+	DrawLogoRec(x + 2 * Ewide_a / 3, y - Tlength, Theight, 0.6*Tlength);
+}
+
+void Draw_I(double x, double y)
+{
+	SetPenColor("Blue");
+	DrawLogoRec(x, y, Iwide, Theight);
+	DrawLogoRec(x + Iwide / 2 - Theight / 2, y - Tlength, Theight, Tlength);
+	DrawLogoRec(x, y - Tlength, Iwide, Theight);
+}
+
+void Draw_S(double x, double y)
+{
+	SetPenColor("Violet");
+	DrawLogoRec(x, y, Twide, Theight);
+	DrawLogoRec(x, y - Tlength / 2, Theight, Tlength / 2);
+	DrawLogoRec(x, y - Tlength / 2, Twide, Theight);
+	DrawLogoRec(x + Twide - Theight, y - Tlength, Theight, Tlength / 2);
+	DrawLogoRec(x, y - Tlength, Twide, Theight);
+}
+
+void DrawLogoRec(double x, double y, double width, double height)
+{
+	StartFilledRegion(1);
+	MovePen(x, y);
+	DrawLine(0, height);
+	DrawLine(width, 0);
+	DrawLine(0, -height);
+	DrawLine(-width, 0);
+	EndFilledRegion();
+}
+
+
+
+bool inBox(double x0, double y0, double x1, double x2, double y1, double y2)
+{
+	return (x0 >= x1 && x0 <= x2 && y0 >= y1 && y0 <= y2);
+}
+
+void MouseEventProcess(int x, int y, int button, int event)
+{
+	double mx, my;
+
+	mx = ScaleXInches(x);/*pixels --> inches*/
+	my = ScaleYInches(y);/*pixels --> inches*/
+	switch (event) {
+		case BUTTON_DOWN:
+			if (button == LEFT_BUTTON) 
+				if (inBox(mx, my, xx, xx + 2, yy + 0.4, yy + 0.8)&&inStartMenu)
+				{
+					GameStart();
+					inStartMenu = 0;
+				}
+				if (inBox(mx, my, xx+0.2, xx + 1.8, yy-0.7, yy - 0.5) && inStartMenu)
+				{
+					exit(-1);
+				}
+				if (inBox(mx, my, xx, xx+2, yy-0.4, yy-0.2))
+				{
+					inStartMenu = 0;
+					ShowCredits();
+					inCredits = 1;
+				}
+				if (inBox(mx, my, sx, sx+0.6, sy, sy+0.4) && inCredits)
+				{
+					Main();
+					inStartMenu = 1;
+					inCredits = 0;
+				}
+	}
+	
+}
